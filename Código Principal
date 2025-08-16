@@ -1,0 +1,329 @@
+import pandas as pd
+import numpy as np
+import talib
+from sklearn.neighbors import NearestNeighbors
+from typing import Dict, List, Tuple, Optional
+import warnings
+warnings.filterwarnings('ignore')
+
+class LorentzianClassificationStrategy:
+    """
+    Implementação completa da estratégia Lorentzian Classification
+    baseada no indicador PineScript original
+    """
+    
+    def __init__(self, 
+                 neighbors_count: int = 8,
+                 max_bars_back: int = 2000,
+                 feature_count: int = 5,
+                 use_volatility_filter: bool = True,
+                 use_regime_filter: bool = True,
+                 use_adx_filter: bool = False,
+                 regime_threshold: float = -0.1,
+                 adx_threshold: int = 20):
+        
+        self.neighbors_count = neighbors_count
+        self.max_bars_back = max_bars_back
+        self.feature_count = feature_count
+        self.use_volatility_filter = use_volatility_filter
+        self.use_regime_filter = use_regime_filter
+        self.use_adx_filter = use_adx_filter
+        self.regime_threshold = regime_threshold
+        self.adx_threshold = adx_threshold
+        
+        # Configurações das features (padrão do PineScript)
+        self.feature_config = {
+            'f1': {'type': 'RSI', 'param_a': 14, 'param_b': 1},
+            'f2': {'type': 'WT', 'param_a': 10, 'param_b': 11},
+            'f3': {'type': 'CCI', 'param_a': 20, 'param_b': 1},
+            'f4': {'type': 'ADX', 'param_a': 20, 'param_b': 2},
+            'f5': {'type': 'RSI', 'param_a': 9, 'param_b': 1}
+        }
+        
+        # Arrays para armazenar features históricas
+        self.feature_arrays = {f'f{i+1}': [] for i in range(feature_count)}
+        self.training_labels = []
+        self.signals = []
+        
+    def normalize_rsi(self, close: pd.Series, length: int, smooth: int = 1) -> pd.Series:
+        """RSI normalizado conforme PineScript"""
+        rsi = talib.RSI(close, timeperiod=length)
+        if smooth > 1:
+            rsi = talib.SMA(rsi, timeperiod=smooth)
+        return (rsi - 50) / 50  # Normalização [-1, 1]
+    
+    def normalize_wt(self, hlc3: pd.Series, channel_length: int, avg_length: int) -> pd.Series:
+        """Wave Trend normalizado"""
+        esa = talib.EMA(hlc3, timeperiod=channel_length)
+        d = talib.EMA(np.abs(hlc3 - esa), timeperiod=channel_length)
+        ci = (hlc3 - esa) / (0.015 * d)
+        wt1 = talib.EMA(ci, timeperiod=avg_length)
+        return wt1 / 100  # Normalização
+    
+    def normalize_cci(self, high: pd.Series, low: pd.Series, close: pd.Series, 
+                     length: int, smooth: int = 1) -> pd.Series:
+        """CCI normalizado"""
+        cci = talib.CCI(high, low, close, timeperiod=length)
+        if smooth > 1:
+            cci = talib.SMA(cci, timeperiod=smooth)
+        return cci / 100  # Normalização
+    
+    def normalize_adx(self, high: pd.Series, low: pd.Series, close: pd.Series, 
+                     length: int) -> pd.Series:
+        """ADX normalizado"""
+        adx = talib.ADX(high, low, close, timeperiod=length)
+        return (adx - 50) / 50  # Normalização [-1, 1]
+    
+    def calculate_feature(self, data: pd.DataFrame, feature_type: str, 
+                         param_a: int, param_b: int) -> pd.Series:
+        """Calcula uma feature específica"""
+        hlc3 = (data['high'] + data['low'] + data['close']) / 3
+        
+        if feature_type == 'RSI':
+            return self.normalize_rsi(data['close'], param_a, param_b)
+        elif feature_type == 'WT':
+            return self.normalize_wt(hlc3, param_a, param_b)
+        elif feature_type == 'CCI':
+            return self.normalize_cci(data['high'], data['low'], data['close'], param_a, param_b)
+        elif feature_type == 'ADX':
+            return self.normalize_adx(data['high'], data['low'], data['close'], param_a)
+        else:
+            raise ValueError(f"Tipo de feature não suportado: {feature_type}")
+    
+    def calculate_all_features(self, data: pd.DataFrame) -> pd.DataFrame:
+        """Calcula todas as features configuradas"""
+        features_df = pd.DataFrame(index=data.index)
+        
+        for i in range(self.feature_count):
+            feature_key = f'f{i+1}'
+            config = self.feature_config[feature_key]
+            
+            feature_values = self.calculate_feature(
+                data, config['type'], config['param_a'], config['param_b']
+            )
+            features_df[feature_key] = feature_values
+        
+        return features_df
+    
+    def get_lorentzian_distance(self, current_features: np.ndarray, 
+                               historical_features: np.ndarray) -> float:
+        """Calcula a distância Lorentziana entre duas observações (otimizado com NumPy)"""
+        # Lidar com NaNs: substituir por 0 ou um valor que não afete a distância, ou ignorar
+        # Para a distância Lorentziana, np.log(1 + abs(x - y)), se um for NaN, o resultado é NaN.
+        # Vamos ignorar pares onde um dos valores é NaN para o cálculo da distância.
+        valid_indices = ~np.isnan(current_features) & ~np.isnan(historical_features)
+        
+        diff = np.abs(current_features[valid_indices] - historical_features[valid_indices])
+        distance = np.sum(np.log(1 + diff))
+        return distance
+    
+    def volatility_filter(self, data: pd.DataFrame, min_length: int = 1, 
+                         max_length: int = 10) -> pd.Series:
+        """Filtro de volatilidade"""
+        returns = data['close'].pct_change()
+        volatility = returns.rolling(window=max_length).std()
+        return volatility > volatility.rolling(window=max_length*5).quantile(0.1)
+    
+    def regime_filter(self, data: pd.DataFrame, threshold: float) -> pd.Series:
+        """Filtro de regime (trending vs ranging)"""
+        ohlc4 = (data['open'] + data['high'] + data['low'] + data['close']) / 4
+        returns = ohlc4.pct_change()
+        regime = returns.rolling(window=50).mean()
+        return regime > threshold
+    
+    def adx_filter(self, data: pd.DataFrame, length: int = 14, threshold: int = 20) -> pd.Series:
+        """Filtro ADX"""
+        adx = talib.ADX(data['high'], data['low'], data['close'], timeperiod=length)
+        return adx > threshold
+    
+    def apply_filters(self, data: pd.DataFrame) -> pd.Series:
+        """Aplica todos os filtros configurados"""
+        filter_result = pd.Series(True, index=data.index)
+        
+        if self.use_volatility_filter:
+            filter_result &= self.volatility_filter(data)
+        
+        if self.use_regime_filter:
+            filter_result &= self.regime_filter(data, self.regime_threshold)
+        
+        if self.use_adx_filter:
+            filter_result &= self.adx_filter(data, threshold=self.adx_threshold)
+        
+        return filter_result
+    
+    def classify_bar(self, data: pd.DataFrame, index: int) -> int:
+        """Classifica um bar como long (1), short (-1) ou neutral (0)"""
+        if index < 4:
+            return 0
+        
+        # Lógica de classificação baseada no movimento futuro
+        current_close = data['close'].iloc[index]
+        future_close = data['close'].iloc[min(index + 4, len(data) - 1)]
+        
+        price_change = (future_close - current_close) / current_close
+        
+        if price_change > 0.001:  # 0.1% threshold
+            return 1  # Long
+        elif price_change < -0.001:
+            return -1  # Short
+        else:
+            return 0  # Neutral
+    
+    def knn_predict(self, features_df: pd.DataFrame, current_index: int) -> int:
+        """Predição usando K-Nearest Neighbors com distância Lorentziana"""
+        if current_index < self.neighbors_count:
+            return 0
+        
+        current_features = features_df.iloc[current_index].values
+        
+        # Verificar se há valores NaN
+        if np.any(np.isnan(current_features)):
+            return 0
+        
+        # Calcular distâncias para barras históricas
+        distances = []
+        labels = []
+        
+        start_index = max(0, current_index - self.max_bars_back)
+        
+        for i in range(start_index, current_index):
+            historical_features = features_df.iloc[i].values
+            
+            if not np.any(np.isnan(historical_features)):
+                distance = self.get_lorentzian_distance(current_features, historical_features)
+                distances.append(distance)
+                labels.append(self.training_labels[i])
+        
+        if len(distances) < self.neighbors_count:
+            return 0
+        
+        # Encontrar K vizinhos mais próximos
+        distances = np.array(distances)
+        labels = np.array(labels)
+        
+        nearest_indices = np.argsort(distances)[:self.neighbors_count]
+        nearest_labels = labels[nearest_indices]
+        
+        # Classificação por maioria
+        unique_labels, counts = np.unique(nearest_labels, return_counts=True)
+        prediction = unique_labels[np.argmax(counts)]
+        
+        return prediction
+    
+    def generate_signals(self, data: pd.DataFrame) -> pd.DataFrame:
+        """Gera sinais de trading para todo o dataset"""
+        # Calcular features
+        features_df = self.calculate_all_features(data)
+        
+        # Calcular labels de treinamento
+        self.training_labels = []
+        for i in range(len(data)):
+            label = self.classify_bar(data, i)
+            self.training_labels.append(label)
+        
+        # Aplicar filtros
+        filters = self.apply_filters(data)
+        
+        # Gerar predições
+        predictions = []
+        for i in range(len(data)):
+            if filters.iloc[i]:
+                prediction = self.knn_predict(features_df, i)
+            else:
+                prediction = 0
+            predictions.append(prediction)
+        
+        # Criar DataFrame de resultados
+        results = pd.DataFrame({
+            'close': data['close'],
+            'prediction': predictions,
+            'filter_passed': filters
+        }, index=data.index)
+        
+        # Gerar sinais de entrada/saída
+        results['signal'] = 0
+        results['position'] = 0
+        
+        current_position = 0
+        for i in range(1, len(results)):
+            prediction = results['prediction'].iloc[i]
+            prev_prediction = results['prediction'].iloc[i-1]
+            
+            # Entrada em posição
+            if prediction == 1 and prev_prediction != 1 and current_position == 0:
+                results.loc[results.index[i], 'signal'] = 1  # Buy signal
+                current_position = 1
+            elif prediction == -1 and prev_prediction != -1 and current_position == 0:
+                results.loc[results.index[i], 'signal'] = -1  # Sell signal
+                current_position = -1
+            
+            # Saída de posição
+            elif current_position == 1 and prediction != 1:
+                results.loc[results.index[i], 'signal'] = -1  # Exit long
+                current_position = 0
+            elif current_position == -1 and prediction != -1:
+                results.loc[results.index[i], 'signal'] = 1  # Exit short
+                current_position = 0
+            
+            results.loc[results.index[i], 'position'] = current_position
+        
+        return results
+
+# Função para testar a estratégia
+def test_strategy():
+    """Função de teste com dados sintéticos"""
+    # Gerar dados sintéticos mais realistas
+    np.random.seed(42)
+    n_periods = 1000
+    
+    # Simular um movimento de preços com tendência e volatilidade
+    returns = np.random.normal(0.0005, 0.02, n_periods)
+    prices = 100 * np.exp(np.cumsum(returns))
+    
+    # Adicionar alguma estrutura aos dados
+    for i in range(1, len(prices)):
+        if i % 100 == 0:  # Mudança de tendência a cada 100 períodos
+            returns[i:i+50] += np.random.choice([-0.001, 0.001])
+    
+    data = pd.DataFrame({
+        'open': prices * (1 + np.random.normal(0, 0.001, n_periods)),
+        'high': prices * (1 + np.abs(np.random.normal(0, 0.005, n_periods))),
+        'low': prices * (1 - np.abs(np.random.normal(0, 0.005, n_periods))),
+        'close': prices,
+        'volume': np.random.randint(1000, 10000, n_periods)
+    })
+    
+    # Garantir que high >= close >= low
+    data['high'] = np.maximum(data['high'], data['close'])
+    data['low'] = np.minimum(data['low'], data['close'])
+    
+    # Criar e testar a estratégia
+    strategy = LorentzianClassificationStrategy(
+        neighbors_count=8,
+        max_bars_back=500,
+        feature_count=5
+    )
+    
+    print("Testando a estratégia Lorentzian Classification...")
+    results = strategy.generate_signals(data)
+    
+    # Estatísticas básicas
+    total_signals = (results['signal'] != 0).sum()
+    buy_signals = (results['signal'] == 1).sum()
+    sell_signals = (results['signal'] == -1).sum()
+    
+    print(f"\nEstatísticas dos Sinais:")
+    print(f"Total de sinais: {total_signals}")
+    print(f"Sinais de compra: {buy_signals}")
+    print(f"Sinais de venda: {sell_signals}")
+    
+    # Mostrar últimos sinais
+    recent_signals = results[results['signal'] != 0].tail(10)
+    if not recent_signals.empty:
+        print(f"\nÚltimos sinais gerados:")
+        print(recent_signals[['close', 'signal', 'prediction']])
+    
+    return results
+
+if __name__ == "__main__":
+    results = test_strategy()
