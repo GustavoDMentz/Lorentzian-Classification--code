@@ -1,5 +1,6 @@
 """Regression tests for causal four-bar labels and neighbor eligibility."""
 import importlib.util
+from importlib.machinery import SourceFileLoader
 from pathlib import Path
 import unittest
 from unittest.mock import patch
@@ -7,7 +8,8 @@ from unittest.mock import patch
 import numpy as np
 import pandas as pd
 
-spec = importlib.util.spec_from_file_location("lorentzian", Path(__file__).resolve().parents[1] / "Código Principal")
+source_path = Path(__file__).resolve().parents[1] / "Código Principal"
+spec = importlib.util.spec_from_loader("lorentzian", SourceFileLoader("lorentzian", str(source_path)))
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
 Strategy = module.LorentzianClassificationStrategy
