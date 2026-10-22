@@ -3,7 +3,7 @@ import unittest
 from unittest.mock import Mock
 
 import pandas as pd
-from evaluation import evaluate_strategy
+from evaluation import evaluate_strategy, evaluate_holdout
 
 
 class EvaluationTests(unittest.TestCase):
@@ -36,6 +36,26 @@ class EvaluationTests(unittest.TestCase):
         out = evaluate_strategy(strategy, self.data, cost_bps=10)
         self.assertEqual(out["turnover"].tolist(), [0, 0, 1, 2])
         self.assertAlmostEqual(out["cost"].sum(), 0.003)
+
+    def test_holdout_preserves_warmup_and_rebases_returns(self):
+        strategy = Mock()
+        strategy.generate_signals.return_value = pd.DataFrame({
+            "position": [0, 1, 1, 0],
+        })
+        out = evaluate_holdout(strategy, self.data, split_index=2, cost_bps=0)
+        strategy.generate_signals.assert_called_once()
+        self.assertEqual(len(out["train"]), 2)
+        self.assertEqual(len(out["test"]), 2)
+        self.assertEqual(out["test"]["executed_position"].tolist(), [1, 1])
+        self.assertAlmostEqual(out["test"]["holdout_equity"].iloc[-1], 1.1)
+        self.assertAlmostEqual(out["test"]["holdout_buy_hold_equity"].iloc[-1], 1.1)
+
+    def test_holdout_invalid_split(self):
+        strategy = Mock()
+        for split in (0, -1, len(self.data), 1.5):
+            with self.subTest(split=split):
+                with self.assertRaises(ValueError):
+                    evaluate_holdout(strategy, self.data, split)
 
     def test_invalid_input_rejected(self):
         strategy = Mock()
