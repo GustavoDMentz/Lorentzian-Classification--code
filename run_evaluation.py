@@ -38,7 +38,7 @@ def load_ohlc_csv(path: str) -> pd.DataFrame:
     for col in ("open", "high", "low", "close"):
         data[col] = pd.to_numeric(data[col], errors="raise")
     ohlc = data[["open", "high", "low", "close"]]
-    if not np.isfinite(ohlc.to_numpy()).all() or (ohlc <= 0).any():
+    if not np.isfinite(ohlc.to_numpy()).all() or (ohlc <= 0).any().any():
         raise ValueError("OHLC values must be finite and positive")
     if (data["high"] < data[["open", "close", "low"]].max(axis=1)).any():
         raise ValueError("high must be at least open, close, and low")
