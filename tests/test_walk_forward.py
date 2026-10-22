@@ -4,7 +4,7 @@ import unittest
 import numpy as np
 import pandas as pd
 
-from walk_forward import expanding_folds, optimize_rsi_walk_forward, fold_returns
+from walk_forward import expanding_folds, optimize_rsi_walk_forward, optimize_lorentzian_walk_forward, fold_returns
 
 
 class WalkForwardTests(unittest.TestCase):
@@ -42,6 +42,49 @@ class WalkForwardTests(unittest.TestCase):
         pd.testing.assert_frame_equal(x, y)
         self.assertEqual(len(x), 3)
         self.assertTrue((x["test_bars"] == 30).all())
+
+    def test_lorentzian_uses_identical_folds(self):
+        data = self.make_data(100)
+        class FakeStrategy:
+            def __init__(self, neighbors_count, max_bars_back, regime_threshold):
+                self.k = neighbors_count
+            def generate_signals(self, frame):
+                return pd.DataFrame({
+                    "position": [0 if self.k == 4 else 1] * len(frame)
+                }, index=frame.index)
+        out = optimize_lorentzian_walk_forward(
+            data, train_bars=60, test_bars=20, cost_bps=10,
+            neighbors_grid=(4, 8), regime_grid=(0.2,),
+            strategy_factory=FakeStrategy
+        )
+        self.assertEqual(len(out), 2)
+        self.assertEqual(out["test_bars"].tolist(), [20, 20])
+        self.assertEqual(out["test_start"].tolist(), [60, 80])
+
+    def test_lorentzian_future_prices_do_not_change_past_selection(self):
+        a = self.make_data(100)
+        b = a.copy()
+        b.loc[85:, ["open", "high", "low", "close"]] *= 2
+        class FakeStrategy:
+            def __init__(self, neighbors_count, max_bars_back, regime_threshold):
+                self.k = neighbors_count
+            def generate_signals(self, frame):
+                # Causal, parameter-dependent synthetic decisions.
+                positions = (frame["close"].pct_change().fillna(0) > 0).astype(int)
+                return pd.DataFrame({"position": positions if self.k == 4 else -positions},
+                                    index=frame.index)
+        kw = dict(train_bars=60, test_bars=20, cost_bps=10,
+                  neighbors_grid=(4, 8), regime_grid=(0.2,),
+                  strategy_factory=FakeStrategy)
+        x = optimize_lorentzian_walk_forward(a, **kw)
+        y = optimize_lorentzian_walk_forward(b, **kw)
+        pd.testing.assert_frame_equal(x.iloc[:1], y.iloc[:1])
+
+    def test_lorentzian_invalid_grid(self):
+        with self.assertRaises(ValueError):
+            optimize_lorentzian_walk_forward(
+                self.make_data(100), 60, 20, neighbors_grid=(0,), regime_grid=(0.2,)
+            )
 
     def test_fold_starts_flat(self):
         data = self.make_data(10)
