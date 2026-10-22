@@ -19,7 +19,7 @@ class LorentzianClassificationStrategy:
                  use_volatility_filter: bool = True,
                  use_regime_filter: bool = True,
                  use_adx_filter: bool = False,
-                 regime_threshold: float = -0.1,
+                 regime_threshold: float = 0.2,
                  adx_threshold: int = 20):
         
         self.neighbors_count = neighbors_count
@@ -125,12 +125,20 @@ class LorentzianClassificationStrategy:
         return volatility > volatility.rolling(window=max_length*5).quantile(0.1)
     
     def regime_filter(self, data: pd.DataFrame, threshold: float) -> pd.Series:
-        """Filtro de regime (trending vs ranging)"""
-        ohlc4 = (data['open'] + data['high'] + data['low'] + data['close']) / 4
-        returns = ohlc4.pct_change()
-        regime = returns.rolling(window=50).mean()
-        return regime > threshold
-    
+        """Causal trend efficiency ratio over 50 bars, in [0, 1].
+
+        0 means a choppy market; 1 means a perfectly directional window.
+        The initial window is ineligible rather than implicitly trending.
+        """
+        if not 0 <= threshold <= 1:
+            raise ValueError("regime_threshold must be between 0 and 1")
+        close = data['close'].astype(float)
+        moves = close.diff()
+        net_move = (close - close.shift(50)).abs()
+        total_move = moves.abs().rolling(window=50, min_periods=50).sum()
+        efficiency = net_move.div(total_move.where(total_move > 0))
+        return (efficiency >= threshold).fillna(False)
+
     def adx_filter(self, data: pd.DataFrame, length: int = 14, threshold: int = 20) -> pd.Series:
         """Filtro ADX"""
         adx = talib.ADX(data['high'], data['low'], data['close'], timeperiod=length)
