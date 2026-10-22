@@ -82,3 +82,75 @@ def optimize_rsi_walk_forward(data: pd.DataFrame, train_bars: int,
             "test_bars": end - start,
         })
     return pd.DataFrame.from_records(records)
+
+
+def optimize_lorentzian_walk_forward(
+    data: pd.DataFrame,
+    train_bars: int,
+    test_bars: int,
+    cost_bps: float = 10.0,
+    neighbors_grid=(4, 8),
+    regime_grid=(0.15, 0.25),
+    max_bars_back: int = 500,
+    strategy_factory=None,
+) -> pd.DataFrame:
+    """Causal expanding-window search with the same scoring as RSI.
+
+    Predictions are cached for each candidate over the full series. This is
+    safe only because the strategy's features and kNN labels are causal:
+    the four-bar label at i is eligible no earlier than bar i+4.
+    The holdout is never used to select candidate parameters.
+    """
+    from importlib.machinery import SourceFileLoader
+    import importlib.util
+    from pathlib import Path
+
+    if cost_bps < 0 or not np.isfinite(cost_bps):
+        raise ValueError("invalid cost_bps")
+    folds = expanding_folds(len(data), train_bars, test_bars)
+    candidates = [(int(k), float(r)) for k, r in product(neighbors_grid, regime_grid)
+                  if int(k) >= 1 and 0 <= float(r) <= 1]
+    if not candidates or max_bars_back < 4:
+        raise ValueError("invalid Lorentzian parameter grid")
+    if strategy_factory is None:
+        path = Path(__file__).with_name("Código Principal")
+        loader = SourceFileLoader("lorentzian_wf", str(path))
+        spec = importlib.util.spec_from_loader(loader.name, loader)
+        module = importlib.util.module_from_spec(spec)
+        loader.exec_module(module)
+        strategy_factory = module.LorentzianClassificationStrategy
+
+    targets = {}
+    for k, regime in candidates:
+        strategy = strategy_factory(
+            neighbors_count=k,
+            max_bars_back=max_bars_back,
+            regime_threshold=regime,
+        )
+        signals = strategy.generate_signals(data)
+        if not signals.index.equals(data.index):
+            raise ValueError("strategy index mismatch")
+        targets[(k, regime)] = signals["position"]
+
+    records = []
+    for start, end in folds:
+        # Equal train-score and test-score conventions for both strategies.
+        scores = {
+            params: score_fold(fold_returns(data, targets[params], 0, start, cost_bps))
+            for params in candidates
+        }
+        best = max(candidates, key=lambda params: (scores[params], -candidates.index(params)))
+        ledger = fold_returns(data, targets[best], start, end, cost_bps)
+        records.append({
+            "train_end": data.index[start - 1],
+            "test_start": data.index[start],
+            "test_end": data.index[end - 1],
+            "neighbors_count": best[0],
+            "regime_threshold": best[1],
+            "max_bars_back": max_bars_back,
+            "train_log_growth": scores[best],
+            "test_return": float(ledger["equity"].iloc[-1] - 1),
+            "test_turnover": float(ledger["turnover"].sum()),
+            "test_bars": end - start,
+        })
+    return pd.DataFrame.from_records(records)
