@@ -276,6 +276,21 @@ class LorentzianClassificationStrategy:
 
         return results
 
+def generate_synthetic_prices(n_periods: int = 1000, seed: int = 42) -> np.ndarray:
+    """Reproducible geometric random walk with piecewise return drift.
+
+    Drift is applied to returns *before* prices are accumulated.
+    These synthetic prices are for smoke tests, not performance validation.
+    """
+    if n_periods < 1:
+        raise ValueError("n_periods must be positive")
+    rng = np.random.default_rng(seed)
+    returns = rng.normal(0.0005, 0.02, n_periods)
+    for i in range(100, n_periods, 100):
+        returns[i:min(i + 50, n_periods)] += rng.choice([-0.001, 0.001])
+    return 100 * np.exp(np.cumsum(returns))
+
+
 # Função para testar a estratégia
 def test_strategy():
     """Função de teste com dados sintéticos"""
@@ -283,15 +298,8 @@ def test_strategy():
     np.random.seed(42)
     n_periods = 1000
     
-    # Simular um movimento de preços com tendência e volatilidade
-    returns = np.random.normal(0.0005, 0.02, n_periods)
-    prices = 100 * np.exp(np.cumsum(returns))
-    
-    # Adicionar alguma estrutura aos dados
-    for i in range(1, len(prices)):
-        if i % 100 == 0:  # Mudança de tendência a cada 100 períodos
-            returns[i:i+50] += np.random.choice([-0.001, 0.001])
-    
+    prices = generate_synthetic_prices(n_periods, seed=42)
+
     data = pd.DataFrame({
         'open': prices * (1 + np.random.normal(0, 0.001, n_periods)),
         'high': prices * (1 + np.abs(np.random.normal(0, 0.005, n_periods))),
