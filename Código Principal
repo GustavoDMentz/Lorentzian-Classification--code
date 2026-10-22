@@ -249,33 +249,31 @@ class LorentzianClassificationStrategy:
             'filter_passed': filters
         }, index=data.index)
         
-        # Gerar sinais de entrada/saída
+        # A prediction is a target position, not an order.
+        # signal is the position delta: +/-1 entry/exit, +/-2 reversal.
         results['signal'] = 0
         results['position'] = 0
-        
+        results['action'] = 'HOLD'
         current_position = 0
         for i in range(1, len(results)):
-            prediction = results['prediction'].iloc[i]
-            prev_prediction = results['prediction'].iloc[i-1]
-            
-            # Entrada em posição
-            if prediction == 1 and prev_prediction != 1 and current_position == 0:
-                results.loc[results.index[i], 'signal'] = 1  # Buy signal
-                current_position = 1
-            elif prediction == -1 and prev_prediction != -1 and current_position == 0:
-                results.loc[results.index[i], 'signal'] = -1  # Sell signal
-                current_position = -1
-            
-            # Saída de posição
-            elif current_position == 1 and prediction != 1:
-                results.loc[results.index[i], 'signal'] = -1  # Exit long
-                current_position = 0
-            elif current_position == -1 and prediction != -1:
-                results.loc[results.index[i], 'signal'] = 1  # Exit short
-                current_position = 0
-            
+            target = int(results['prediction'].iloc[i])
+            if target not in (-1, 0, 1):
+                raise ValueError("prediction must be -1, 0, or 1")
+            delta = target - current_position
+            if delta:
+                action = {
+                    (0, 1): 'ENTER_LONG',
+                    (0, -1): 'ENTER_SHORT',
+                    (1, 0): 'EXIT_LONG',
+                    (-1, 0): 'EXIT_SHORT',
+                    (1, -1): 'REVERSE_TO_SHORT',
+                    (-1, 1): 'REVERSE_TO_LONG',
+                }[(current_position, target)]
+                results.loc[results.index[i], 'signal'] = delta
+                results.loc[results.index[i], 'action'] = action
+            current_position = target
             results.loc[results.index[i], 'position'] = current_position
-        
+
         return results
 
 # Função para testar a estratégia
