@@ -153,12 +153,12 @@ class LorentzianClassificationStrategy:
     
     def classify_bar(self, data: pd.DataFrame, index: int) -> int:
         """Classifica um bar como long (1), short (-1) ou neutral (0)"""
-        if index < 4:
+        if index + 4 >= len(data):
             return 0
         
         # Lógica de classificação baseada no movimento futuro
         current_close = data['close'].iloc[index]
-        future_close = data['close'].iloc[min(index + 4, len(data) - 1)]
+        future_close = data['close'].iloc[index + 4]
         
         price_change = (future_close - current_close) / current_close
         
@@ -186,7 +186,8 @@ class LorentzianClassificationStrategy:
         
         start_index = max(0, current_index - self.max_bars_back)
         
-        for i in range(start_index, current_index):
+        # Only labels whose four-bar horizon has fully matured are observable.
+        for i in range(start_index, max(start_index, current_index - 3)):
             historical_features = features_df.iloc[i].values
             
             if not np.any(np.isnan(historical_features)):
@@ -215,7 +216,7 @@ class LorentzianClassificationStrategy:
         # Calcular features
         features_df = self.calculate_all_features(data)
         
-        # Calcular labels de treinamento
+        # Calcular labels de treinamento (rótulos futuros não maturados são excluídos do kNN)
         self.training_labels = []
         for i in range(len(data)):
             label = self.classify_bar(data, i)
