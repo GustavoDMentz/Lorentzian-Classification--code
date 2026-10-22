@@ -27,3 +27,33 @@ def evaluate_strategy(strategy, data: pd.DataFrame, cost_bps: float = 10.0) -> p
         raise ValueError("strategy output index must match input")
     ledger = backtest_next_open(data, signals["position"], cost_bps=cost_bps)
     return pd.concat([signals, ledger], axis=1)
+
+
+def evaluate_holdout(
+    strategy,
+    data: pd.DataFrame,
+    split_index: int,
+    cost_bps: float = 10.0,
+) -> dict:
+    """Evaluate a chronological holdout with historical warmup preserved.
+
+    Run the causal model on the entire history, then score only the test
+    period. The split must be fixed *before* inspecting holdout performance.
+    An execution at the first test open may reflect the previous bar's signal.
+    No parameter selection or fitting may use the holdout.
+    """
+    if not isinstance(split_index, int) or not 1 <= split_index < len(data):
+        raise ValueError("split_index must leave nonempty train and test periods")
+    full = evaluate_strategy(strategy, data, cost_bps=cost_bps)
+    test = full.iloc[split_index:].copy()
+    # Rebase both curves at the start of the holdout.
+    test["holdout_equity"] = (1 + test["net_return"]).cumprod()
+    test["holdout_buy_hold_equity"] = (
+        data["open"].iloc[split_index:].astype(float)
+        / float(data["open"].iloc[split_index])
+    )
+    return {
+        "train": full.iloc[:split_index].copy(),
+        "test": test,
+        "split_index": split_index,
+    }
