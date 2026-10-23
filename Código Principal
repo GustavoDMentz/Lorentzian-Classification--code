@@ -19,7 +19,7 @@ class LorentzianClassificationStrategy:
                  use_volatility_filter: bool = True,
                  use_regime_filter: bool = True,
                  use_adx_filter: bool = False,
-                 regime_threshold: float = -0.1,
+                 regime_threshold: float = 0.2,
                  adx_threshold: int = 20):
         
         self.neighbors_count = neighbors_count
@@ -125,12 +125,20 @@ class LorentzianClassificationStrategy:
         return volatility > volatility.rolling(window=max_length*5).quantile(0.1)
     
     def regime_filter(self, data: pd.DataFrame, threshold: float) -> pd.Series:
-        """Filtro de regime (trending vs ranging)"""
-        ohlc4 = (data['open'] + data['high'] + data['low'] + data['close']) / 4
-        returns = ohlc4.pct_change()
-        regime = returns.rolling(window=50).mean()
-        return regime > threshold
-    
+        """Causal trend efficiency ratio over 50 bars, in [0, 1].
+
+        0 means a choppy market; 1 means a perfectly directional window.
+        The initial window is ineligible rather than implicitly trending.
+        """
+        if not 0 <= threshold <= 1:
+            raise ValueError("regime_threshold must be between 0 and 1")
+        close = data['close'].astype(float)
+        moves = close.diff()
+        net_move = (close - close.shift(50)).abs()
+        total_move = moves.abs().rolling(window=50, min_periods=50).sum()
+        efficiency = net_move.div(total_move.where(total_move > 0))
+        return (efficiency >= threshold).fillna(False)
+
     def adx_filter(self, data: pd.DataFrame, length: int = 14, threshold: int = 20) -> pd.Series:
         """Filtro ADX"""
         adx = talib.ADX(data['high'], data['low'], data['close'], timeperiod=length)
@@ -153,12 +161,12 @@ class LorentzianClassificationStrategy:
     
     def classify_bar(self, data: pd.DataFrame, index: int) -> int:
         """Classifica um bar como long (1), short (-1) ou neutral (0)"""
-        if index < 4:
+        if index + 4 >= len(data):
             return 0
         
         # Lógica de classificação baseada no movimento futuro
         current_close = data['close'].iloc[index]
-        future_close = data['close'].iloc[min(index + 4, len(data) - 1)]
+        future_close = data['close'].iloc[index + 4]
         
         price_change = (future_close - current_close) / current_close
         
@@ -174,53 +182,46 @@ class LorentzianClassificationStrategy:
         if current_index < self.neighbors_count:
             return 0
         
-        current_features = features_df.iloc[current_index].values
+        feature_matrix = getattr(self, "_feature_matrix", None)
+        if feature_matrix is None or len(feature_matrix) != len(features_df):
+            feature_matrix = features_df.to_numpy(dtype=float)
+        current_features = feature_matrix[current_index]
         
         # Verificar se há valores NaN
         if np.any(np.isnan(current_features)):
             return 0
         
-        # Calcular distâncias para barras históricas
-        distances = []
-        labels = []
-        
+        # NumPy computes all candidate distances in compiled loops.
+        # Only four-bar-matured labels are eligible: i <= current_index - 4.
         start_index = max(0, current_index - self.max_bars_back)
-        
-        for i in range(start_index, current_index):
-            historical_features = features_df.iloc[i].values
-            
-            if not np.any(np.isnan(historical_features)):
-                distance = self.get_lorentzian_distance(current_features, historical_features)
-                distances.append(distance)
-                labels.append(self.training_labels[i])
-        
-        if len(distances) < self.neighbors_count:
+        stop_index = max(start_index, current_index - 3)
+        history = feature_matrix[start_index:stop_index]
+        valid = np.isfinite(history).all(axis=1)
+        history = history[valid]
+        if len(history) < self.neighbors_count:
             return 0
-        
-        # Encontrar K vizinhos mais próximos
-        distances = np.array(distances)
-        labels = np.array(labels)
-        
-        nearest_indices = np.argsort(distances)[:self.neighbors_count]
-        nearest_labels = labels[nearest_indices]
-        
-        # Classificação por maioria
-        unique_labels, counts = np.unique(nearest_labels, return_counts=True)
-        prediction = unique_labels[np.argmax(counts)]
-        
+        distances = np.log1p(np.abs(history - current_features)).sum(axis=1)
+        labels = np.asarray(self.training_labels[start_index:stop_index], dtype=int)[valid]
+        nearest = np.argsort(distances)[:self.neighbors_count]
+        values, counts = np.unique(labels[nearest], return_counts=True)
+        prediction = int(values[np.argmax(counts)])
         return prediction
     
     def generate_signals(self, data: pd.DataFrame) -> pd.DataFrame:
         """Gera sinais de trading para todo o dataset"""
         # Calcular features
         features_df = self.calculate_all_features(data)
+        self._feature_matrix = features_df.to_numpy(dtype=float)
         
-        # Calcular labels de treinamento
-        self.training_labels = []
-        for i in range(len(data)):
-            label = self.classify_bar(data, i)
-            self.training_labels.append(label)
-        
+        # Calcular labels de treinamento (rótulos futuros não maturados são excluídos do kNN)
+        close = data["close"].to_numpy(dtype=float)
+        labels = np.zeros(len(close), dtype=np.int8)
+        if len(close) > 4:
+            changes = (close[4:] - close[:-4]) / close[:-4]
+            labels[:-4] = np.where(changes > 0.001, 1,
+                                   np.where(changes < -0.001, -1, 0))
+        self.training_labels = labels.tolist()
+
         # Aplicar filtros
         filters = self.apply_filters(data)
         
@@ -240,34 +241,45 @@ class LorentzianClassificationStrategy:
             'filter_passed': filters
         }, index=data.index)
         
-        # Gerar sinais de entrada/saída
-        results['signal'] = 0
-        results['position'] = 0
-        
-        current_position = 0
-        for i in range(1, len(results)):
-            prediction = results['prediction'].iloc[i]
-            prev_prediction = results['prediction'].iloc[i-1]
-            
-            # Entrada em posição
-            if prediction == 1 and prev_prediction != 1 and current_position == 0:
-                results.loc[results.index[i], 'signal'] = 1  # Buy signal
-                current_position = 1
-            elif prediction == -1 and prev_prediction != -1 and current_position == 0:
-                results.loc[results.index[i], 'signal'] = -1  # Sell signal
-                current_position = -1
-            
-            # Saída de posição
-            elif current_position == 1 and prediction != 1:
-                results.loc[results.index[i], 'signal'] = -1  # Exit long
-                current_position = 0
-            elif current_position == -1 and prediction != -1:
-                results.loc[results.index[i], 'signal'] = 1  # Exit short
-                current_position = 0
-            
-            results.loc[results.index[i], 'position'] = current_position
-        
+        # A prediction is a target position, not an order.
+        # signal is the position delta: +/-1 entry/exit, +/-2 reversal.
+        # Position transitions are array operations; no Python per-bar loop.
+        positions = np.asarray(predictions, dtype=np.int8)
+        if len(positions):
+            positions[0] = 0
+        if not np.isin(positions, (-1, 0, 1)).all():
+            raise ValueError("prediction must be -1, 0, or 1")
+        previous = np.r_[0, positions[:-1]]
+        deltas = positions - previous
+        action_map = {
+            (0, 1): "ENTER_LONG", (0, -1): "ENTER_SHORT",
+            (1, 0): "EXIT_LONG", (-1, 0): "EXIT_SHORT",
+            (1, -1): "REVERSE_TO_SHORT", (-1, 1): "REVERSE_TO_LONG",
+        }
+        actions = np.full(len(positions), "HOLD", dtype=object)
+        for (old, new), name in action_map.items():
+            actions[(previous == old) & (positions == new)] = name
+        results["signal"] = deltas
+        results["position"] = positions
+        results["action"] = actions
+
+        self._feature_matrix = None
         return results
+
+def generate_synthetic_prices(n_periods: int = 1000, seed: int = 42) -> np.ndarray:
+    """Reproducible geometric random walk with piecewise return drift.
+
+    Drift is applied to returns *before* prices are accumulated.
+    These synthetic prices are for smoke tests, not performance validation.
+    """
+    if n_periods < 1:
+        raise ValueError("n_periods must be positive")
+    rng = np.random.default_rng(seed)
+    returns = rng.normal(0.0005, 0.02, n_periods)
+    for i in range(100, n_periods, 100):
+        returns[i:min(i + 50, n_periods)] += rng.choice([-0.001, 0.001])
+    return 100 * np.exp(np.cumsum(returns))
+
 
 # Função para testar a estratégia
 def test_strategy():
@@ -276,15 +288,8 @@ def test_strategy():
     np.random.seed(42)
     n_periods = 1000
     
-    # Simular um movimento de preços com tendência e volatilidade
-    returns = np.random.normal(0.0005, 0.02, n_periods)
-    prices = 100 * np.exp(np.cumsum(returns))
-    
-    # Adicionar alguma estrutura aos dados
-    for i in range(1, len(prices)):
-        if i % 100 == 0:  # Mudança de tendência a cada 100 períodos
-            returns[i:i+50] += np.random.choice([-0.001, 0.001])
-    
+    prices = generate_synthetic_prices(n_periods, seed=42)
+
     data = pd.DataFrame({
         'open': prices * (1 + np.random.normal(0, 0.001, n_periods)),
         'high': prices * (1 + np.abs(np.random.normal(0, 0.005, n_periods))),
