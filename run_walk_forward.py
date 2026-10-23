@@ -14,6 +14,7 @@ import numpy as np
 
 from comparison import summarize_walk_forward
 from indicator_tournament import tournament
+from stateful_systems import evaluate_systems
 from run_evaluation import load_ohlc_csv
 from walk_forward import optimize_rsi_walk_forward, optimize_lorentzian_walk_forward
 
@@ -78,6 +79,12 @@ def main():
                             max_bars_back=args.max_bars_back)
     out = Path(args.output_dir)
     out.mkdir(parents=True, exist_ok=True)
+    systems_summary, systems_folds = evaluate_systems(
+        data, args.train_bars, args.test_bars, args.cost_bps)
+    systems_summary.to_csv(out / "stateful_systems_leaderboard.csv", index=False)
+    systems_folds.to_csv(out / "stateful_systems_folds.csv", index=False)
+    print("\nSTATEFUL SYSTEMS (predeclared fixed parameters; no tuning):")
+    print(systems_summary.to_string(index=False))
     leaderboard, indicator_folds = tournament(data, args.train_bars, args.test_bars, args.cost_bps)
     leaderboard.to_csv(out / "indicator_leaderboard.csv", index=False)
     indicator_folds.to_csv(out / "indicator_folds.csv", index=False)
