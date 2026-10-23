@@ -1,0 +1,31 @@
+name: Kraken OOB observation windows
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 */3 * * *'
+permissions:
+  contents: read
+concurrency:
+  group: kraken-oob-observe
+  cancel-in-progress: false
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 22
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+      - name: Verify observer
+        run: python -m unittest discover -s tests -p 'test_kraken_oob_observer.py' -v
+      - name: Sample public book and ticker every minute for 15 minutes
+        run: python research/kraken_oob_observer.py --samples 15 --interval 60
+      - name: Preserve immutable observation window
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: oob-window-${{ github.run_id }}-${{ github.run_attempt }}
+          path: research_data/kraken_oob/
+          retention-days: 14
+          if-no-files-found: warn
