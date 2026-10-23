@@ -24,7 +24,7 @@ def hourly_to_daily(path):
     df = pd.read_csv(path, parse_dates=["date"])
     df["date"] = pd.to_datetime(df["date"], utc=True)
     df = df.set_index("date").sort_index()
-    expected = pd.date_range("2022-01-01", df.index.max(),
+    expected = pd.date_range(df.index.min(), df.index.max(),
                              freq="h", tz="UTC")
     if df.index.max() < pd.Timestamp("2026-01-03", tz="UTC"):
         raise ValueError("2026 validation requires data beyond 2025")
