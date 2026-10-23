@@ -188,35 +188,20 @@ class LorentzianClassificationStrategy:
         if np.any(np.isnan(current_features)):
             return 0
         
-        # Calcular distâncias para barras históricas
-        distances = []
-        labels = []
-        
+        # NumPy computes all candidate distances in compiled loops.
+        # Only four-bar-matured labels are eligible: i <= current_index - 4.
         start_index = max(0, current_index - self.max_bars_back)
-        
-        # Only labels whose four-bar horizon has fully matured are observable.
-        for i in range(start_index, max(start_index, current_index - 3)):
-            historical_features = features_df.iloc[i].values
-            
-            if not np.any(np.isnan(historical_features)):
-                distance = self.get_lorentzian_distance(current_features, historical_features)
-                distances.append(distance)
-                labels.append(self.training_labels[i])
-        
-        if len(distances) < self.neighbors_count:
+        stop_index = max(start_index, current_index - 3)
+        history = features_df.iloc[start_index:stop_index].to_numpy(dtype=float)
+        valid = np.isfinite(history).all(axis=1)
+        history = history[valid]
+        if len(history) < self.neighbors_count:
             return 0
-        
-        # Encontrar K vizinhos mais próximos
-        distances = np.array(distances)
-        labels = np.array(labels)
-        
-        nearest_indices = np.argsort(distances)[:self.neighbors_count]
-        nearest_labels = labels[nearest_indices]
-        
-        # Classificação por maioria
-        unique_labels, counts = np.unique(nearest_labels, return_counts=True)
-        prediction = unique_labels[np.argmax(counts)]
-        
+        distances = np.log1p(np.abs(history - current_features)).sum(axis=1)
+        labels = np.asarray(self.training_labels[start_index:stop_index], dtype=int)[valid]
+        nearest = np.argsort(distances)[:self.neighbors_count]
+        values, counts = np.unique(labels[nearest], return_counts=True)
+        prediction = int(values[np.argmax(counts)])
         return prediction
     
     def generate_signals(self, data: pd.DataFrame) -> pd.DataFrame:
@@ -225,11 +210,14 @@ class LorentzianClassificationStrategy:
         features_df = self.calculate_all_features(data)
         
         # Calcular labels de treinamento (rótulos futuros não maturados são excluídos do kNN)
-        self.training_labels = []
-        for i in range(len(data)):
-            label = self.classify_bar(data, i)
-            self.training_labels.append(label)
-        
+        close = data["close"].to_numpy(dtype=float)
+        labels = np.zeros(len(close), dtype=np.int8)
+        if len(close) > 4:
+            changes = (close[4:] - close[:-4]) / close[:-4]
+            labels[:-4] = np.where(changes > 0.001, 1,
+                                   np.where(changes < -0.001, -1, 0))
+        self.training_labels = labels.tolist()
+
         # Aplicar filtros
         filters = self.apply_filters(data)
         
@@ -251,28 +239,25 @@ class LorentzianClassificationStrategy:
         
         # A prediction is a target position, not an order.
         # signal is the position delta: +/-1 entry/exit, +/-2 reversal.
-        results['signal'] = 0
-        results['position'] = 0
-        results['action'] = 'HOLD'
-        current_position = 0
-        for i in range(1, len(results)):
-            target = int(results['prediction'].iloc[i])
-            if target not in (-1, 0, 1):
-                raise ValueError("prediction must be -1, 0, or 1")
-            delta = target - current_position
-            if delta:
-                action = {
-                    (0, 1): 'ENTER_LONG',
-                    (0, -1): 'ENTER_SHORT',
-                    (1, 0): 'EXIT_LONG',
-                    (-1, 0): 'EXIT_SHORT',
-                    (1, -1): 'REVERSE_TO_SHORT',
-                    (-1, 1): 'REVERSE_TO_LONG',
-                }[(current_position, target)]
-                results.loc[results.index[i], 'signal'] = delta
-                results.loc[results.index[i], 'action'] = action
-            current_position = target
-            results.loc[results.index[i], 'position'] = current_position
+        # Position transitions are array operations; no Python per-bar loop.
+        positions = np.asarray(predictions, dtype=np.int8)
+        if len(positions):
+            positions[0] = 0
+        if not np.isin(positions, (-1, 0, 1)).all():
+            raise ValueError("prediction must be -1, 0, or 1")
+        previous = np.r_[0, positions[:-1]]
+        deltas = positions - previous
+        action_map = {
+            (0, 1): "ENTER_LONG", (0, -1): "ENTER_SHORT",
+            (1, 0): "EXIT_LONG", (-1, 0): "EXIT_SHORT",
+            (1, -1): "REVERSE_TO_SHORT", (-1, 1): "REVERSE_TO_LONG",
+        }
+        actions = np.full(len(positions), "HOLD", dtype=object)
+        for (old, new), name in action_map.items():
+            actions[(previous == old) & (positions == new)] = name
+        results["signal"] = deltas
+        results["position"] = positions
+        results["action"] = actions
 
         return results
 
