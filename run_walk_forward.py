@@ -84,6 +84,18 @@ def main():
         encoding="utf-8"
     )
     print(result["comparison"].to_string(index=False))
+    print("\nSame-trade cost ablation (no re-optimization; zero-cost gross return):")
+    for label, key in (("RSI", "rsi"), ("Lorentzian", "lorentzian")):
+        frame = result[key]
+        gross = float((1 + frame["test_gross_return"]).prod() - 1)
+        net = float((1 + frame["test_return"]).prod() - 1)
+        turnover = float(frame["test_turnover"].sum())
+        long_bars = int(frame["test_long_bars"].sum())
+        short_bars = int(frame["test_short_bars"].sum())
+        flat_bars = int(frame["test_flat_bars"].sum())
+        print(f"{label}: gross_0bps={gross:.6%}, net_{args.cost_bps:g}bps={net:.6%}, "
+              f"turnover={turnover:g}, long_bars={long_bars}, "
+              f"short_bars={short_bars}, flat_bars={flat_bars}")
     print(f"Saved fold reports and configuration in {out}")
 
 
