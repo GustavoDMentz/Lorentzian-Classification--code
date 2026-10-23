@@ -57,7 +57,10 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install numpy pandas scikit-learn TA-Lib
       - name: Validate indicator tournament
-        run: python -m unittest discover -s tests -p "test_indicator_tournament.py" -v
+        run: |
+          python -m unittest discover -s tests -p "test_indicator_tournament.py" -v
+          python -m unittest discover -s tests -p "test_stateful_systems.py" -v
+          python -m unittest discover -s tests -p "test_adaptive_selector.py" -v
       - name: Run selected audit
         env:
           MODE: ${{ inputs.mode }}
