@@ -27,8 +27,18 @@ jobs:
         run: mkdir -p research_data && python fetch_kucoin.py --start 2022-01-01 --end 2026-10-23 --output research_data/ETH_USDT_1h.csv
       - name: Fetch BTC SOL and ADA from KuCoin
         run: python research/fetch_multi_asset.py --start 2022-01-01 --end 2026-10-23 --output-dir research_data
+      - name: Fetch historical ETH 2017-2020 (best effort; fail closed on missing bars)
+        id: historical
+        continue-on-error: true
+        run: python fetch_kucoin.py --start 2017-01-01 --end 2021-01-01 --output research_data/ETH_USDT_historical_1h.csv
       - name: Test frozen ETH ML on BTC and SOL
-        run: python research/frozen_eth_ml.py --input-dir research_data
+        run: |
+          if [ -f research_data/ETH_USDT_historical_1h.csv ]; then
+            python research/frozen_eth_ml.py --input-dir research_data --historical-eth research_data/ETH_USDT_historical_1h.csv
+          else
+            echo "Historical ETH KuCoin incomplete/unavailable; run 2026 holdout only."
+            python research/frozen_eth_ml.py --input-dir research_data
+          fi
       - name: Upload research outputs
         if: always()
         uses: actions/upload-artifact@v4
