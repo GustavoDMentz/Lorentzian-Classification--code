@@ -3,6 +3,14 @@ name: ETH-USDT Walk-Forward
 on:
   workflow_dispatch:
     inputs:
+      mode:
+        description: 'full_audit runs 2022, 2023 and 2024-2025 automatically; custom uses dates below'
+        required: true
+        default: 'full_audit'
+        type: choice
+        options:
+          - full_audit
+          - custom
       data_url:
         description: 'Public HTTPS URL to ETH-USDT 1h OHLC CSV (date/open/high/low/close); optional'
         required: false
@@ -48,14 +56,31 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install numpy pandas scikit-learn TA-Lib
-      - name: Obtain ETH-USDT hourly candles
+      - name: Run selected audit
         env:
+          MODE: ${{ inputs.mode }}
           START: ${{ inputs.start }}
           END: ${{ inputs.end }}
           DATA_URL: ${{ inputs.data_url }}
+          TRAIN: ${{ inputs.train_bars }}
+          TEST: ${{ inputs.test_bars }}
+          COST: ${{ inputs.cost_bps }}
         run: |
-          if [ -n "$DATA_URL" ]; then
-            python - <<'PY'
+          set -euo pipefail
+          if [ "$MODE" = "full_audit" ]; then
+            if [ -n "$DATA_URL" ]; then
+              echo "data_url is supported only in custom mode" >&2
+              exit 1
+            fi
+            periods=("2022:2022-01-01:2023-01-01" "2023:2023-01-01:2024-01-01" "2024-2025:2024-01-01:2026-01-01")
+          else
+            periods=("custom:$START:$END")
+          fi
+          for period in "${periods[@]}"; do
+            IFS=: read -r label from to <<< "$period"
+            mkdir -p "results/$label"
+            if [ "$MODE" = "custom" ] && [ -n "$DATA_URL" ]; then
+              python - <<'PY'
           import os
           import urllib.parse
           import urllib.request
@@ -70,16 +95,12 @@ jobs:
           with open("eth_usdt_1h.csv", "wb") as out:
               out.write(data)
           PY
-          else
-            python fetch_kucoin.py --start "$START" --end "$END" --output eth_usdt_1h.csv
-          fi
-      - name: Run walk-forward evaluation
-        env:
-          TRAIN: ${{ inputs.train_bars }}
-          TEST: ${{ inputs.test_bars }}
-          COST: ${{ inputs.cost_bps }}
-        run: |
-          python run_walk_forward.py eth_usdt_1h.csv --train-bars "$TRAIN" --test-bars "$TEST" --cost-bps "$COST" --output-dir results
+            else
+              python fetch_kucoin.py --start "$from" --end "$to" --output eth_usdt_1h.csv
+            fi
+            python run_walk_forward.py eth_usdt_1h.csv --train-bars "$TRAIN" --test-bars "$TEST" --cost-bps "$COST" --output-dir "results/$label"
+            cp eth_usdt_1h.csv "results/$label/eth_usdt_1h.csv"
+          done
       - name: Upload evaluation artifacts
         if: always()
         uses: actions/upload-artifact@v4
@@ -87,6 +108,5 @@ jobs:
           name: eth-usdt-walk-forward
           path: |
             results/
-            eth_usdt_1h.csv
           if-no-files-found: warn
           retention-days: 14
