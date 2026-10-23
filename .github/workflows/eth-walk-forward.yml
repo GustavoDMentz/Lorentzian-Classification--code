@@ -1,10 +1,10 @@
-name: ETH-USD Walk-Forward
+name: ETH-USDT Walk-Forward
 
 on:
   workflow_dispatch:
     inputs:
       data_url:
-        description: 'Public HTTPS URL to ETH-USD 1h OHLC CSV (date/open/high/low/close); optional'
+        description: 'Public HTTPS URL to ETH-USDT 1h OHLC CSV (date/open/high/low/close); optional'
         required: false
         type: string
       start:
@@ -48,7 +48,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install numpy pandas scikit-learn TA-Lib
-      - name: Obtain ETH-USD hourly candles
+      - name: Obtain ETH-USDT hourly candles
         env:
           START: ${{ inputs.start }}
           END: ${{ inputs.end }}
@@ -67,11 +67,11 @@ jobs:
               data = response.read(30_000_001)
           if len(data) > 30_000_000:
               raise SystemExit("CSV exceeds 30 MB limit")
-          with open("eth_usd_1h.csv", "wb") as out:
+          with open("eth_usdt_1h.csv", "wb") as out:
               out.write(data)
           PY
           else
-            python fetch_eth.py --start "$START" --end "$END" --output eth_usd_1h.csv
+            python fetch_kucoin.py --start "$START" --end "$END" --output eth_usdt_1h.csv
           fi
       - name: Run walk-forward evaluation
         env:
@@ -79,14 +79,14 @@ jobs:
           TEST: ${{ inputs.test_bars }}
           COST: ${{ inputs.cost_bps }}
         run: |
-          python run_walk_forward.py eth_usd_1h.csv --train-bars "$TRAIN" --test-bars "$TEST" --cost-bps "$COST" --output-dir results
+          python run_walk_forward.py eth_usdt_1h.csv --train-bars "$TRAIN" --test-bars "$TEST" --cost-bps "$COST" --output-dir results
       - name: Upload evaluation artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: eth-usd-walk-forward
+          name: eth-usdt-walk-forward
           path: |
             results/
-            eth_usd_1h.csv
+            eth_usdt_1h.csv
           if-no-files-found: warn
           retention-days: 14
