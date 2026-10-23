@@ -24,8 +24,10 @@ def hourly_to_daily(path):
     df = pd.read_csv(path, parse_dates=["date"])
     df["date"] = pd.to_datetime(df["date"], utc=True)
     df = df.set_index("date").sort_index()
-    expected = pd.date_range("2022-01-01", "2025-12-31 23:00",
+    expected = pd.date_range("2022-01-01", df.index.max(),
                              freq="h", tz="UTC")
+    if df.index.max() < pd.Timestamp("2026-01-03", tz="UTC"):
+        raise ValueError("2026 validation requires data beyond 2025")
     if not df.index.equals(expected):
         raise ValueError(f"{path}: hourly candles missing, duplicated or out of order")
     required = ["open", "high", "low", "close", "volume"]
@@ -104,7 +106,7 @@ def main():
             "cash": pd.Series(0, index=features.index),
         }
         for strategy, signal in signals.items():
-            for year in (2024, 2025):
+            for year in (2024, 2025, 2026):
                 for cost in COSTS_BPS:
                     rows.append(dict(asset=symbol, strategy=strategy, year=year,
                                      cost_bps=cost,
@@ -119,8 +121,8 @@ def main():
     manifest = dict(
         trained_on="ETH-USDT KuCoin daily 2022-2023",
         selected_on="ETH-USDT 2024 (exploratory model selection)",
-        externally_tested_on="BTC-USDT and SOL-USDT 2024-2025; no refitting",
-        held_out="ETH-USDT 2025",
+        externally_tested_on="BTC-USDT and SOL-USDT 2024-2026; no refitting",
+        held_out="ETH-USDT 2025-2026 (2025 inspected before 2026 run)",
         model="HistGradientBoostingClassifier",
         model_parameters=model.get_params(),
         threshold=THRESHOLD, features=list(train_x.columns),
