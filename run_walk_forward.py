@@ -13,6 +13,7 @@ from pathlib import Path
 import numpy as np
 
 from comparison import summarize_walk_forward
+from indicator_tournament import tournament
 from run_evaluation import load_ohlc_csv
 from walk_forward import optimize_rsi_walk_forward, optimize_lorentzian_walk_forward
 
@@ -77,6 +78,11 @@ def main():
                             max_bars_back=args.max_bars_back)
     out = Path(args.output_dir)
     out.mkdir(parents=True, exist_ok=True)
+    leaderboard, indicator_folds = tournament(data, args.train_bars, args.test_bars, args.cost_bps)
+    leaderboard.to_csv(out / "indicator_leaderboard.csv", index=False)
+    indicator_folds.to_csv(out / "indicator_folds.csv", index=False)
+    print("\nFixed-parameter indicator tournament (no tuning):")
+    print(leaderboard.to_string(index=False))
     for key in ("rsi", "lorentzian", "comparison"):
         result[key].to_csv(out / f"{key}.csv", index=False)
     (out / "config.json").write_text(
