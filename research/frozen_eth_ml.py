@@ -75,14 +75,15 @@ def main():
     parser.add_argument("--input-dir", default="research_data")
     args = parser.parse_args()
     root = Path(args.input_dir)
-    dataset, checksums = {}, {}
+    dataset, checksums, daily_data = {}, {}, {}
     for symbol in SYMBOLS:
         path = root / f"{symbol.replace('-', '_')}_1h.csv"
         checksums[symbol] = hashlib.sha256(path.read_bytes()).hexdigest()
-        dataset[symbol] = make_features(hourly_to_daily(path))
+        daily_data[symbol] = hourly_to_daily(path)
+        dataset[symbol] = make_features(daily_data[symbol])
 
     train_x, train_forward = dataset["ETH-USDT"]
-    train_mask = train_x.index.year <= 2023
+    train_mask = train_x.index < pd.Timestamp("2023-12-30", tz="UTC")
     train_y = (train_forward.loc[train_mask] > 0).astype(int)
     model = HistGradientBoostingClassifier(
         max_iter=100, max_leaf_nodes=7, l2_regularization=10,
@@ -97,10 +98,8 @@ def main():
                          index=features.index)
         signals = {
             "frozen_eth_ml": (prob >= THRESHOLD).astype(int),
-            "ma30": (hourly_to_daily(root / f"{symbol.replace('-', '_')}_1h.csv").close
-                     .rolling(30).mean().reindex(features.index) < 
-                     hourly_to_daily(root / f"{symbol.replace('-', '_')}_1h.csv").close
-                     .reindex(features.index)).astype(int),
+            "ma30": (daily_data[symbol].close.reindex(features.index) >
+                     daily_data[symbol].close.rolling(30).mean().reindex(features.index)).astype(int),
             "buy_hold": pd.Series(1, index=features.index),
             "cash": pd.Series(0, index=features.index),
         }
