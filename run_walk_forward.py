@@ -15,6 +15,7 @@ import numpy as np
 from comparison import summarize_walk_forward
 from indicator_tournament import tournament
 from stateful_systems import evaluate_systems
+from adaptive_selector import evaluate_adaptive
 from run_evaluation import load_ohlc_csv
 from walk_forward import optimize_rsi_walk_forward, optimize_lorentzian_walk_forward
 
@@ -79,6 +80,13 @@ def main():
                             max_bars_back=args.max_bars_back)
     out = Path(args.output_dir)
     out.mkdir(parents=True, exist_ok=True)
+    adaptive_summary, adaptive_folds, adaptive_selection = evaluate_adaptive(
+        data, args.train_bars, args.test_bars, args.cost_bps)
+    adaptive_summary.to_csv(out / "adaptive_leaderboard.csv", index=False)
+    adaptive_folds.to_csv(out / "adaptive_folds.csv", index=False)
+    adaptive_selection.rename("selected_system").to_csv(out / "adaptive_selections.csv")
+    print("\nADAPTIVE SELECTOR (causal rolling 336h, 24h min hold):")
+    print(adaptive_summary.to_string(index=False))
     systems_summary, systems_folds = evaluate_systems(
         data, args.train_bars, args.test_bars, args.cost_bps)
     systems_summary.to_csv(out / "stateful_systems_leaderboard.csv", index=False)
