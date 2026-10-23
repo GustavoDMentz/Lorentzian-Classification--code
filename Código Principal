@@ -182,7 +182,10 @@ class LorentzianClassificationStrategy:
         if current_index < self.neighbors_count:
             return 0
         
-        current_features = features_df.iloc[current_index].values
+        feature_matrix = getattr(self, "_feature_matrix", None)
+        if feature_matrix is None or len(feature_matrix) != len(features_df):
+            feature_matrix = features_df.to_numpy(dtype=float)
+        current_features = feature_matrix[current_index]
         
         # Verificar se há valores NaN
         if np.any(np.isnan(current_features)):
@@ -192,7 +195,7 @@ class LorentzianClassificationStrategy:
         # Only four-bar-matured labels are eligible: i <= current_index - 4.
         start_index = max(0, current_index - self.max_bars_back)
         stop_index = max(start_index, current_index - 3)
-        history = features_df.iloc[start_index:stop_index].to_numpy(dtype=float)
+        history = feature_matrix[start_index:stop_index]
         valid = np.isfinite(history).all(axis=1)
         history = history[valid]
         if len(history) < self.neighbors_count:
@@ -208,6 +211,7 @@ class LorentzianClassificationStrategy:
         """Gera sinais de trading para todo o dataset"""
         # Calcular features
         features_df = self.calculate_all_features(data)
+        self._feature_matrix = features_df.to_numpy(dtype=float)
         
         # Calcular labels de treinamento (rótulos futuros não maturados são excluídos do kNN)
         close = data["close"].to_numpy(dtype=float)
@@ -259,6 +263,7 @@ class LorentzianClassificationStrategy:
         results["position"] = positions
         results["action"] = actions
 
+        self._feature_matrix = None
         return results
 
 def generate_synthetic_prices(n_periods: int = 1000, seed: int = 42) -> np.ndarray:
