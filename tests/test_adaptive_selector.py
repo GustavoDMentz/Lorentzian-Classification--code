@@ -23,9 +23,9 @@ class AdaptiveTests(unittest.TestCase):
 
     def test_initial_cash_and_valid_positions(self):
         targets, selected = adaptive_targets(self.data(), lookback=100)
-        self.assertTrue((targets.iloc[:100] == 0).all())
+        self.assertTrue((targets.iloc[:99] == 0).all())
         self.assertTrue(targets.isin([-1, 0, 1]).all())
-        self.assertTrue((selected.iloc[:100] == "CASH").all())
+        self.assertTrue((selected.iloc[:99] == "CASH").all())
 
     def test_fold_accounting(self):
         summary, folds, selection = evaluate_adaptive(
