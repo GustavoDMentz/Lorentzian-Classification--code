@@ -1,7 +1,7 @@
-"""Run the ETH-USD 1h RSI vs Lorentzian walk-forward experiment.
+"""Run the ETH-USDT 1h RSI vs Lorentzian walk-forward experiment.
 
 Example:
- python run_walk_forward.py eth_usd_1h.csv --train-bars 1440 --test-bars 336 --cost-bps 10 --output-dir results
+ python run_walk_forward.py eth_usdt_1h.csv --train-bars 1440 --test-bars 336 --cost-bps 10 --output-dir results
 
 Caution: Lorentzian kNN is a Python loop; long histories can take hours.
 Results are research-only, not evidence of profitable trading.
@@ -39,7 +39,7 @@ def run_experiment(data, train_bars=1440, test_bars=336, cost_bps=10.0,
     )
     comparison = summarize_walk_forward(rsi, lorentzian, data)
     config = {
-        "asset": "ETH-USD", "timeframe": "1h", "source": "Coinbase Exchange",
+        "asset": "ETH-USDT", "timeframe": "1h", "source": "KuCoin spot",
         "train_bars": train_bars, "test_bars": test_bars,
         "cost_bps_per_turnover_unit": cost_bps,
         "rsi_periods": list(rsi_periods),
