@@ -4,8 +4,8 @@ from pathlib import Path
 import pandas as pd
 
 
-def aggregate(root: Path) -> pd.DataFrame:
-    files = sorted(root.glob("*/indicator_leaderboard.csv"))
+def aggregate(root: Path, filename: str = "indicator_leaderboard.csv") -> pd.DataFrame:
+    files = sorted(root.glob(f"*/{filename}"))
     if not files:
         raise ValueError("no tournament leaderboards found")
     frames = []
@@ -34,6 +34,10 @@ def main():
     report.to_csv(args.root / "indicator_cross_regime.csv", index=False)
     print("\nCROSS-REGIME INDICATOR LEADERBOARD (equal-weight descriptive mean):")
     print(report.to_string(index=False))
+    systems = aggregate(args.root, "stateful_systems_leaderboard.csv")
+    systems.to_csv(args.root / "stateful_cross_regime.csv", index=False)
+    print("\nCROSS-REGIME STATEFUL SYSTEMS (fixed rules, no optimization):")
+    print(systems.to_string(index=False))
 
 
 if __name__ == "__main__":
