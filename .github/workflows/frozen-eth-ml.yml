@@ -24,9 +24,9 @@ jobs:
       - name: Validate causal research utilities
         run: python -m unittest discover -s tests -p 'test_research_multi_asset.py' -v
       - name: Fetch ETH from KuCoin
-        run: mkdir -p research_data && python fetch_kucoin.py --start 2022-01-01 --end 2026-01-01 --output research_data/ETH_USDT_1h.csv
+        run: mkdir -p research_data && python fetch_kucoin.py --start 2022-01-01 --end 2026-10-23 --output research_data/ETH_USDT_1h.csv
       - name: Fetch BTC SOL and ADA from KuCoin
-        run: python research/fetch_multi_asset.py --start 2022-01-01 --end 2026-01-01 --output-dir research_data
+        run: python research/fetch_multi_asset.py --start 2022-01-01 --end 2026-10-23 --output-dir research_data
       - name: Test frozen ETH ML on BTC and SOL
         run: python research/frozen_eth_ml.py --input-dir research_data
       - name: Upload research outputs
