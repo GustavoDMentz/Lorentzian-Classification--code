@@ -60,6 +60,7 @@ jobs:
         run: |
           python -m unittest discover -s tests -p "test_indicator_tournament.py" -v
           python -m unittest discover -s tests -p "test_stateful_systems.py" -v
+          python -m unittest discover -s tests -p "test_adaptive_selector.py" -v
       - name: Run selected audit
         env:
           MODE: ${{ inputs.mode }}
