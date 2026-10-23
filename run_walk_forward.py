@@ -96,6 +96,14 @@ def main():
         print(f"{label}: gross_0bps={gross:.6%}, net_{args.cost_bps:g}bps={net:.6%}, "
               f"turnover={turnover:g}, long_bars={long_bars}, "
               f"short_bars={short_bars}, flat_bars={flat_bars}")
+    print("\nFixed-trade sensitivity across cost assumptions:")
+    for label, key in (("RSI", "rsi"), ("Lorentzian", "lorentzian")):
+        frame = result[key]
+        vals = ", ".join(
+            f"{bps}bps={((1 + frame[f'test_return_{bps}bps']).prod() - 1):.4%}"
+            for bps in (0, 5, 10, 20)
+        )
+        print(f"{label}: {vals}")
     print(f"Saved fold reports and configuration in {out}")
 
 
