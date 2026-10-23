@@ -78,6 +78,11 @@ def optimize_rsi_walk_forward(data: pd.DataFrame, train_bars: int,
             "train_log_growth": score_fold(
                 fold_returns(data, targets[best], 0, start, cost_bps)),
             "test_return": float(test_ledger["equity"].iloc[-1] - 1),
+            "test_gross_return": float((1 + test_ledger["gross_return"]).prod() - 1),
+            "test_cost_sum": float(test_ledger["cost"].sum()),
+            "test_long_bars": int((test_ledger["executed_position"] == 1).sum()),
+            "test_short_bars": int((test_ledger["executed_position"] == -1).sum()),
+            "test_flat_bars": int((test_ledger["executed_position"] == 0).sum()),
             "test_turnover": float(test_ledger["turnover"].sum()),
             "test_bars": end - start,
         })
@@ -150,6 +155,11 @@ def optimize_lorentzian_walk_forward(
             "max_bars_back": max_bars_back,
             "train_log_growth": scores[best],
             "test_return": float(ledger["equity"].iloc[-1] - 1),
+            "test_gross_return": float((1 + ledger["gross_return"]).prod() - 1),
+            "test_cost_sum": float(ledger["cost"].sum()),
+            "test_long_bars": int((ledger["executed_position"] == 1).sum()),
+            "test_short_bars": int((ledger["executed_position"] == -1).sum()),
+            "test_flat_bars": int((ledger["executed_position"] == 0).sum()),
             "test_turnover": float(ledger["turnover"].sum()),
             "test_bars": end - start,
         })
