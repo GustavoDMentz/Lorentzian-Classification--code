@@ -1,0 +1,70 @@
+name: ETH-USD Walk-Forward
+
+on:
+  workflow_dispatch:
+    inputs:
+      start:
+        description: 'UTC start date (inclusive)'
+        required: true
+        default: '2024-01-01'
+        type: string
+      end:
+        description: 'UTC end date (exclusive)'
+        required: true
+        default: '2024-05-01'
+        type: string
+      train_bars:
+        description: 'Initial training hours'
+        required: true
+        default: '1440'
+        type: string
+      test_bars:
+        description: 'Walk-forward test hours'
+        required: true
+        default: '336'
+        type: string
+      cost_bps:
+        description: 'Cost per turnover unit (bps)'
+        required: true
+        default: '10'
+        type: string
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      - name: Install scientific dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install numpy pandas scikit-learn TA-Lib
+      - name: Download ETH-USD hourly candles
+        env:
+          START: ${{ inputs.start }}
+          END: ${{ inputs.end }}
+        run: |
+          python fetch_eth.py --start "$START" --end "$END" --output eth_usd_1h.csv
+      - name: Run walk-forward evaluation
+        env:
+          TRAIN: ${{ inputs.train_bars }}
+          TEST: ${{ inputs.test_bars }}
+          COST: ${{ inputs.cost_bps }}
+        run: |
+          python run_walk_forward.py eth_usd_1h.csv --train-bars "$TRAIN" --test-bars "$TEST" --cost-bps "$COST" --output-dir results
+      - name: Upload evaluation artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eth-usd-walk-forward
+          path: |
+            results/
+            eth_usd_1h.csv
+          if-no-files-found: warn
+          retention-days: 14
