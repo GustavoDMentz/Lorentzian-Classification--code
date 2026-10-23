@@ -75,6 +75,7 @@ def evaluate(signal, forward, year, bps):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--input-dir", default="research_data")
+    parser.add_argument("--historical-eth", default=None)
     args = parser.parse_args()
     root = Path(args.input_dir)
     dataset, checksums, daily_data = {}, {}, {}
@@ -116,6 +117,26 @@ def main():
                       "position":signals["frozen_eth_ml"].to_numpy()}).to_csv(
                           root / f"{symbol.replace('-', '_')}_ml_signals.csv", index=False)
 
+    if args.historical_eth:
+        historical = Path(args.historical_eth)
+        checksums["ETH-USDT-historical"] = hashlib.sha256(historical.read_bytes()).hexdigest()
+        old_daily = hourly_to_daily(historical)
+        old_features, old_forward = make_features(old_daily)
+        old_probs = pd.Series(model.predict_proba(old_features)[:, 1], index=old_features.index)
+        old_signals = {
+            "frozen_eth_ml": (old_probs >= THRESHOLD).astype(int),
+            "ma30": (old_daily.close.reindex(old_features.index) > old_daily.close.rolling(30).mean().reindex(old_features.index)).astype(int),
+            "buy_hold": pd.Series(1, index=old_features.index),
+            "cash": pd.Series(0, index=old_features.index),
+        }
+        for strategy, signal in old_signals.items():
+            for year in (2017, 2018, 2019, 2020):
+                if not (signal.index.year == year).any():
+                    continue
+                for cost in COSTS_BPS:
+                    rows.append(dict(asset="ETH-USDT-historical", strategy=strategy,
+                                     year=year, cost_bps=cost,
+                                     **evaluate(signal, old_forward, year, cost)))
     report = pd.DataFrame(rows)
     report.to_csv(root / "frozen_eth_ml_cross_asset.csv", index=False)
     manifest = dict(
