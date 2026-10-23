@@ -38,6 +38,10 @@ def main():
     systems.to_csv(args.root / "stateful_cross_regime.csv", index=False)
     print("\nCROSS-REGIME STATEFUL SYSTEMS (fixed rules, no optimization):")
     print(systems.to_string(index=False))
+    adaptive = aggregate(args.root, "adaptive_leaderboard.csv")
+    adaptive.to_csv(args.root / "adaptive_cross_regime.csv", index=False)
+    print("\nCROSS-REGIME ADAPTIVE SELECTOR:")
+    print(adaptive.to_string(index=False))
 
 
 if __name__ == "__main__":
