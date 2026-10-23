@@ -43,6 +43,16 @@ def score_fold(ledger: pd.DataFrame) -> float:
     return float(np.log(equity))
 
 
+def cost_sensitivity(data, targets, start, end):
+    """Same selected positions at every cost; no re-optimization or leakage."""
+    return {
+        f"test_return_{bps}bps": float(
+            fold_returns(data, targets, start, end, float(bps))["equity"].iloc[-1] - 1
+        )
+        for bps in (0, 5, 10, 20)
+    }
+
+
 def optimize_rsi_walk_forward(data: pd.DataFrame, train_bars: int,
                               test_bars: int, cost_bps: float = 10.0,
                               periods=(7, 14, 21),
@@ -84,6 +94,7 @@ def optimize_rsi_walk_forward(data: pd.DataFrame, train_bars: int,
             "test_short_bars": int((test_ledger["executed_position"] == -1).sum()),
             "test_flat_bars": int((test_ledger["executed_position"] == 0).sum()),
             "test_turnover": float(test_ledger["turnover"].sum()),
+            **cost_sensitivity(data, targets[best], start, end),
             "test_bars": end - start,
         })
     return pd.DataFrame.from_records(records)
@@ -161,6 +172,7 @@ def optimize_lorentzian_walk_forward(
             "test_short_bars": int((ledger["executed_position"] == -1).sum()),
             "test_flat_bars": int((ledger["executed_position"] == 0).sum()),
             "test_turnover": float(ledger["turnover"].sum()),
+            **cost_sensitivity(data, targets[best], start, end),
             "test_bars": end - start,
         })
     return pd.DataFrame.from_records(records)
