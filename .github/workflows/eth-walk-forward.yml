@@ -103,6 +103,8 @@ jobs:
             python run_walk_forward.py eth_usdt_1h.csv --train-bars "$TRAIN" --test-bars "$TEST" --cost-bps "$COST" --output-dir "results/$label"
             cp eth_usdt_1h.csv "results/$label/eth_usdt_1h.csv"
           done
+      - name: Aggregate cross-regime ranking
+        run: python aggregate_tournament.py results
       - name: Upload evaluation artifacts
         if: always()
         uses: actions/upload-artifact@v4
